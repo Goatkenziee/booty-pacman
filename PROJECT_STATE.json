@@ -1,0 +1,33 @@
+{
+  "updatedAt": "2026-07-05T00:36:23.160Z",
+  "framework": "Next.js",
+  "dbModels": [],
+  "apiRoutes": [],
+  "pages": [
+    "app/page.tsx"
+  ],
+  "components": [
+    "app/layout.tsx",
+    "components/booty-pacman-game.tsx",
+    "components/ui/bento-grid.tsx",
+    "components/ui/button.tsx",
+    "components/ui/card.tsx",
+    "components/ui/shimmer-button.tsx"
+  ],
+  "dependencies": [
+    "@types/node",
+    "@types/react",
+    "@types/react-dom",
+    "autoprefixer",
+    "clsx",
+    "lucide-react",
+    "next",
+    "postcss",
+    "react",
+    "react-dom",
+    "tailwind-merge",
+    "tailwindcss",
+    "typescript"
+  ],
+  "fileCount": 17
+}
