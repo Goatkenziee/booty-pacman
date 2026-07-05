@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "App",
-  description: "Built on YouMe",
+  title: "Booty Pacman",
+  description: "The classic arcade game gets a cheeky makeover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
