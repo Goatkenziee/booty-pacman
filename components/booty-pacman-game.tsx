@@ -230,361 +230,363 @@ export function BootyPacmanGame() {
 
   const gameRef = useRef({
     maze: MAZE_TEMPLATE.map((r) => r.split("")),
-    player: { x: 14, y: 23, dir: "left" as Dir, nextDir: null as Dir, mouthOpen: true },
+    player: { x: 14, y: 23, dir: "left" as Dir, nextDir: null as Dir | null, mouthOpen: true },
     ghosts: [] as Ghost[],
-    dotsLeft: 0,
+    score: 0,
+    lives: 3,
+    level: 1,
+    dotsTotal: 0,
+    dotsEaten: 0,
     animFrame: 0,
-    moveCounter: 0,
+    mouthTimer: 0,
     frightenedTimer: 0,
-    ghostEatCombo: 0,
+    gameState: "playing" as "playing" | "won" | "lost",
   });
 
   const initGame = useCallback(() => {
-    const maze = MAZE_TEMPLATE.map((r) => r.split(""));
-    let dots = 0;
-    for (const row of maze) {
-      for (const cell of row) {
-        if (cell === "1" || cell === "3") dots++;
-      }
-    }
-
-    const ghosts: Ghost[] = [
+    const g = gameRef.current;
+    g.maze = MAZE_TEMPLATE.map((r) => r.split(""));
+    g.player = { x: 14, y: 23, dir: "left", nextDir: null, mouthOpen: true };
+    g.ghosts = [
       { x: 14, y: 11, color: GHOST_COLORS[0], dir: "left", frightened: false, eaten: false, homeX: 14, homeY: 11 },
       { x: 12, y: 11, color: GHOST_COLORS[1], dir: "right", frightened: false, eaten: false, homeX: 12, homeY: 11 },
       { x: 16, y: 11, color: GHOST_COLORS[2], dir: "left", frightened: false, eaten: false, homeX: 16, homeY: 11 },
-      { x: 14, y: 13, color: GHOST_COLORS[3], dir: "up", frightened: false, eaten: false, homeX: 14, homeY: 13 },
+      { x: 14, y: 9, color: GHOST_COLORS[3], dir: "up", frightened: false, eaten: false, homeX: 14, homeY: 9 },
     ];
+    g.score = 0;
+    g.lives = 3;
+    g.level = 1;
+    g.dotsTotal = 0;
+    g.dotsEaten = 0;
+    g.animFrame = 0;
+    g.mouthTimer = 0;
+    g.frightenedTimer = 0;
+    g.gameState = "playing";
 
-    gameRef.current = {
-      maze,
-      player: { x: 14, y: 23, dir: "left", nextDir: null, mouthOpen: true },
-      ghosts,
-      dotsLeft: dots,
-      animFrame: 0,
-      moveCounter: 0,
-      frightenedTimer: 0,
-      ghostEatCombo: 0,
-    };
+    // Count dots
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (g.maze[r][c] === "1" || g.maze[r][c] === "3") g.dotsTotal++;
+      }
+    }
 
     setScore(0);
     setLives(3);
     setGameState("playing");
+    setLevel(1);
   }, []);
 
-  useEffect(() => {
-    initGame();
-  }, [initGame]);
-
-  const isWalkable = useCallback((x: number, y: number, maze: string[][]) => {
-    // Tunnel wrap
-    if (y === 14) {
-      if (x < 0) return true;
-      if (x >= COLS) return true;
-    }
+  const isWalkable = useCallback((maze: string[][], x: number, y: number) => {
     if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return false;
     return maze[y][x] !== "0";
   }, []);
 
-  const getNextPos = useCallback((x: number, y: number, dir: Dir): Pos => {
-    switch (dir) {
-      case "up": return { x, y: y - 1 };
-      case "down": return { x, y: y + 1 };
-      case "left": return { x: x - 1, y };
-      case "right": return { x: x + 1, y };
-      default: return { x, y };
+  const moveGhost = useCallback((ghost: Ghost, maze: string[][], player: { x: number; y: number }, frame: number) => {
+    if (ghost.eaten) {
+      // Move back to home
+      const dx = ghost.homeX - ghost.x;
+      const dy = ghost.homeY - ghost.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        ghost.x += dx > 0 ? 1 : -1;
+      } else if (dy !== 0) {
+        ghost.y += dy > 0 ? 1 : -1;
+      }
+      if (ghost.x === ghost.homeX && ghost.y === ghost.homeY) {
+        ghost.eaten = false;
+        ghost.frightened = false;
+      }
+      return;
     }
-  }, []);
 
-  const getAvailableDirs = useCallback((x: number, y: number, maze: string[][], currentDir: Dir): Dir[] => {
     const dirs: Dir[] = ["up", "down", "left", "right"];
-    return dirs.filter((d) => {
-      if (d === currentDir) return false;
-      if (d === "up" && currentDir === "down") return false;
-      if (d === "down" && currentDir === "up") return false;
-      if (d === "left" && currentDir === "right") return false;
-      if (d === "right" && currentDir === "left") return false;
-      const next = getNextPos(x, y, d);
-      return isWalkable(next.x, next.y, maze);
-    });
-  }, [getNextPos, isWalkable]);
+    const opposites: Record<string, Dir> = { up: "down", down: "up", left: "right", right: "left" };
 
-  const updateGhosts = useCallback((maze: string[][], ghosts: Ghost[], player: Pos, frame: number) => {
-    for (const ghost of ghosts) {
-      if (ghost.eaten) {
-        // Move back to home
-        const dx = ghost.homeX - ghost.x;
-        const dy = ghost.homeY - ghost.y;
-        if (Math.abs(dx) > Math.abs(dy)) {
-          const nx = ghost.x + (dx > 0 ? 1 : -1);
-          if (isWalkable(nx, ghost.y, maze)) { ghost.x = nx; continue; }
+    // Try to move toward player (or random if frightened)
+    let possible: Dir[] = [];
+    for (const d of dirs) {
+      if (d === opposites[ghost.dir || "right"]) continue;
+      let nx = ghost.x;
+      let ny = ghost.y;
+      if (d === "up") ny--;
+      else if (d === "down") ny++;
+      else if (d === "left") nx--;
+      else if (d === "right") nx++;
+      if (isWalkable(maze, nx, ny)) possible.push(d);
+    }
+
+    if (possible.length === 0) {
+      // Reverse direction
+      ghost.dir = opposites[ghost.dir || "right"];
+      if (ghost.dir === "up") ghost.y--;
+      else if (ghost.dir === "down") ghost.y++;
+      else if (ghost.dir === "left") ghost.x--;
+      else if (ghost.dir === "right") ghost.x++;
+      return;
+    }
+
+    if (ghost.frightened) {
+      ghost.dir = possible[Math.floor(Math.random() * possible.length)];
+    } else {
+      // Chase player
+      let best = possible[0];
+      let bestDist = Infinity;
+      for (const d of possible) {
+        let nx = ghost.x;
+        let ny = ghost.y;
+        if (d === "up") ny--;
+        else if (d === "down") ny++;
+        else if (d === "left") nx--;
+        else if (d === "right") nx++;
+        const dist = Math.abs(nx - player.x) + Math.abs(ny - player.y);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = d;
         }
-        const ny = ghost.y + (dy > 0 ? 1 : -1);
-        if (isWalkable(ghost.x, ny, maze)) { ghost.y = ny; continue; }
-        // If stuck, just teleport
-        if (ghost.x === ghost.homeX && ghost.y === ghost.homeY) {
-          ghost.eaten = false;
+      }
+      ghost.dir = best;
+    }
+
+    if (ghost.dir === "up") ghost.y--;
+    else if (ghost.dir === "down") ghost.y++;
+    else if (ghost.dir === "left") ghost.x--;
+    else if (ghost.dir === "right") ghost.x++;
+  }, [isWalkable]);
+
+  const gameLoop = useCallback(() => {
+    const g = gameRef.current;
+    if (g.gameState !== "playing") return;
+
+    g.animFrame++;
+    g.mouthTimer++;
+    if (g.mouthTimer > 8) {
+      g.player.mouthOpen = !g.player.mouthOpen;
+      g.mouthTimer = 0;
+    }
+
+    // Handle player input (nextDir)
+    if (g.player.nextDir) {
+      let nx = g.player.x;
+      let ny = g.player.y;
+      if (g.player.nextDir === "up") ny--;
+      else if (g.player.nextDir === "down") ny++;
+      else if (g.player.nextDir === "left") nx--;
+      else if (g.player.nextDir === "right") nx++;
+      if (isWalkable(g.maze, nx, ny)) {
+        g.player.dir = g.player.nextDir;
+        g.player.nextDir = null;
+      }
+    }
+
+    // Move player
+    let px = g.player.x;
+    let py = g.player.y;
+    if (g.player.dir === "up") py--;
+    else if (g.player.dir === "down") py++;
+    else if (g.player.dir === "left") px--;
+    else if (g.player.dir === "right") px++;
+
+    if (isWalkable(g.maze, px, py)) {
+      g.player.x = px;
+      g.player.y = py;
+    }
+
+    // Eat dot
+    const cell = g.maze[g.player.y][g.player.x];
+    if (cell === "1") {
+      g.maze[g.player.y][g.player.x] = "2";
+      g.score += 10;
+      g.dotsEaten++;
+      setScore(g.score);
+    } else if (cell === "3") {
+      g.maze[g.player.y][g.player.x] = "2";
+      g.score += 50;
+      g.dotsEaten++;
+      g.frightenedTimer = 300;
+      for (const ghost of g.ghosts) {
+        if (!ghost.eaten) ghost.frightened = true;
+      }
+      setScore(g.score);
+    }
+
+    // Frightened timer
+    if (g.frightenedTimer > 0) {
+      g.frightenedTimer--;
+      if (g.frightenedTimer === 0) {
+        for (const ghost of g.ghosts) ghost.frightened = false;
+      }
+    }
+
+    // Move ghosts (every other frame)
+    if (g.animFrame % 4 === 0) {
+      for (const ghost of g.ghosts) {
+        moveGhost(ghost, g.maze, g.player, g.animFrame);
+      }
+    }
+
+    // Check collisions
+    for (const ghost of g.ghosts) {
+      if (ghost.x === g.player.x && ghost.y === g.player.y) {
+        if (ghost.frightened && !ghost.eaten) {
+          ghost.eaten = true;
           ghost.frightened = false;
-        }
-        continue;
-      }
-
-      // Random movement
-      const available = getAvailableDirs(ghost.x, ghost.y, maze, ghost.dir!);
-      
-      // Occasionally try to chase player
-      if (Math.random() < 0.3 && !ghost.frightened) {
-        const dirs: Dir[] = ["up", "down", "left", "right"];
-        let bestDir = ghost.dir;
-        let bestDist = Infinity;
-        for (const d of dirs) {
-          const next = getNextPos(ghost.x, ghost.y, d);
-          if (isWalkable(next.x, next.y, maze)) {
-            const dist = Math.abs(next.x - player.x) + Math.abs(next.y - player.y);
-            if (dist < bestDist) {
-              bestDist = dist;
-              bestDir = d;
-            }
+          g.score += 200;
+          setScore(g.score);
+        } else if (!ghost.eaten) {
+          g.lives--;
+          setLives(g.lives);
+          if (g.lives <= 0) {
+            g.gameState = "lost";
+            setGameState("lost");
+            return;
           }
-        }
-        ghost.dir = bestDir;
-      } else if (available.length > 0) {
-        ghost.dir = available[Math.floor(Math.random() * available.length)];
-      }
-
-      const next = getNextPos(ghost.x, ghost.y, ghost.dir);
-      
-      // Tunnel wrap
-      if (ghost.y === 14) {
-        if (next.x < 0) { ghost.x = COLS - 1; continue; }
-        if (next.x >= COLS) { ghost.x = 0; continue; }
-      }
-
-      if (isWalkable(next.x, next.y, maze)) {
-        ghost.x = next.x;
-        ghost.y = next.y;
-      } else {
-        // Try another direction
-        const altDirs = available.filter((d) => d !== ghost.dir);
-        if (altDirs.length > 0) {
-          ghost.dir = altDirs[Math.floor(Math.random() * altDirs.length)];
-          const altNext = getNextPos(ghost.x, ghost.y, ghost.dir);
-          if (isWalkable(altNext.x, altNext.y, maze)) {
-            ghost.x = altNext.x;
-            ghost.y = altNext.y;
+          // Reset positions
+          g.player.x = 14;
+          g.player.y = 23;
+          g.player.dir = "left";
+          for (const gh of g.ghosts) {
+            gh.x = gh.homeX;
+            gh.y = gh.homeY;
+            gh.frightened = false;
+            gh.eaten = false;
           }
+          g.frightenedTimer = 0;
         }
       }
     }
-  }, [getNextPos, isWalkable, getAvailableDirs]);
 
-  useEffect(() => {
-    if (gameState !== "playing") return;
+    // Win check
+    if (g.dotsEaten >= g.dotsTotal) {
+      g.gameState = "won";
+      setGameState("won");
+      return;
+    }
 
+    requestAnimationFrame(gameLoop);
+  }, [isWalkable, moveGhost]);
+
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const g = gameRef.current;
 
-    const game = gameRef.current;
-    let animationId: number;
+    // Clear
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const keys: Record<string, boolean> = {};
-    const handleKeyDown = (e: KeyboardEvent) => {
-      keys[e.key] = true;
-      switch (e.key) {
-        case "ArrowUp": game.player.nextDir = "up"; break;
-        case "ArrowDown": game.player.nextDir = "down"; break;
-        case "ArrowLeft": game.player.nextDir = "left"; break;
-        case "ArrowRight": game.player.nextDir = "right"; break;
-      }
-    };
-    const handleKeyUp = (e: KeyboardEvent) => { keys[e.key] = false; };
-
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
-    const gameLoop = () => {
-      game.animFrame++;
-      game.moveCounter++;
-
-      // Mouth animation
-      game.player.mouthOpen = Math.floor(game.animFrame / 5) % 2 === 0;
-
-      // Move player every 8 frames
-      if (game.moveCounter % 8 === 0) {
-        // Try next direction first
-        if (game.player.nextDir) {
-          const next = getNextPos(game.player.x, game.player.y, game.player.nextDir);
-          if (isWalkable(next.x, next.y, game.maze)) {
-            game.player.dir = game.player.nextDir;
-            game.player.nextDir = null;
-          }
-        }
-
-        const next = getNextPos(game.player.x, game.player.y, game.player.dir);
-
-        // Tunnel wrap
-        if (game.player.y === 14) {
-          if (next.x < 0) { game.player.x = COLS - 1; }
-          else if (next.x >= COLS) { game.player.x = 0; }
-          else if (isWalkable(next.x, next.y, game.maze)) {
-            game.player.x = next.x;
-            game.player.y = next.y;
-          }
-        } else if (isWalkable(next.x, next.y, game.maze)) {
-          game.player.x = next.x;
-          game.player.y = next.y;
-        }
-
-        // Eat dot
-        const cell = game.maze[game.player.y][game.player.x];
-        if (cell === "1") {
-          game.maze[game.player.y][game.player.x] = "2";
-          game.dotsLeft--;
-          setScore((s) => s + 10);
+    // Draw maze
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const cell = g.maze[r][c];
+        const x = c * TILE;
+        const y = r * TILE;
+        if (cell === "0") {
+          ctx.fillStyle = "#2121de";
+          ctx.fillRect(x, y, TILE, TILE);
+          // Inner dark
+          ctx.fillStyle = "#000";
+          ctx.fillRect(x + 1, y + 1, TILE - 2, TILE - 2);
+        } else if (cell === "1") {
+          ctx.fillStyle = "#ffb8ae";
+          ctx.beginPath();
+          ctx.arc(x + TILE / 2, y + TILE / 2, 2, 0, Math.PI * 2);
+          ctx.fill();
         } else if (cell === "3") {
-          game.maze[game.player.y][game.player.x] = "2";
-          game.dotsLeft--;
-          game.frightenedTimer = 300;
-          game.ghostEatCombo = 0;
-          for (const ghost of game.ghosts) {
-            ghost.frightened = true;
-          }
-          setScore((s) => s + 50);
-        }
-
-        // Move ghosts every 10 frames
-        if (game.moveCounter % 10 === 0) {
-          updateGhosts(game.maze, game.ghosts, { x: game.player.x, y: game.player.y }, game.animFrame);
-        }
-
-        // Check ghost collisions
-        for (const ghost of game.ghosts) {
-          if (ghost.x === game.player.x && ghost.y === game.player.y) {
-            if (ghost.frightened && !ghost.eaten) {
-              ghost.eaten = true;
-              ghost.frightened = false;
-              game.ghostEatCombo++;
-              setScore((s) => s + 200 * game.ghostEatCombo);
-            } else if (!ghost.eaten) {
-              setLives((l) => {
-                if (l - 1 <= 0) {
-                  setGameState("lost");
-                }
-                return l - 1;
-              });
-              // Reset positions
-              game.player.x = 14;
-              game.player.y = 23;
-              game.player.dir = "left";
-              break;
-            }
-          }
-        }
-
-        // Frightened timer
-        if (game.frightenedTimer > 0) {
-          game.frightenedTimer--;
-          if (game.frightenedTimer === 0) {
-            for (const ghost of game.ghosts) {
-              ghost.frightened = false;
-            }
-          }
-        }
-
-        // Win check
-        if (game.dotsLeft <= 0) {
-          setGameState("won");
+          ctx.fillStyle = "#ffb8ae";
+          ctx.beginPath();
+          ctx.arc(x + TILE / 2, y + TILE / 2, 6, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
+    }
 
-      // Draw
-      ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, COLS * TILE, ROWS * TILE);
+    // Draw ghosts
+    for (const ghost of g.ghosts) {
+      drawGhost(ctx, ghost.x, ghost.y, ghost.color, ghost.frightened, ghost.eaten, g.animFrame);
+    }
 
-      // Draw maze
-      for (let y = 0; y < ROWS; y++) {
-        for (let x = 0; x < COLS; x++) {
-          const cell = game.maze[y][x];
-          if (cell === "0") {
-            ctx.fillStyle = "#2121de";
-            ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
-          } else if (cell === "1") {
-            ctx.fillStyle = "#ffb8ae";
-            ctx.beginPath();
-            ctx.arc(x * TILE + TILE / 2, y * TILE + TILE / 2, 2, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (cell === "3") {
-            ctx.fillStyle = "#ffb8ae";
-            ctx.beginPath();
-            ctx.arc(x * TILE + TILE / 2, y * TILE + TILE / 2, 6, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
+    // Draw player (booty)
+    drawBooty(ctx, g.player.x, g.player.y, g.player.dir, g.player.mouthOpen);
+
+    requestAnimationFrame(draw);
+  }, []);
+
+  useEffect(() => {
+    initGame();
+
+    const handleKey = (e: KeyboardEvent) => {
+      const g = gameRef.current;
+      if (g.gameState !== "playing") return;
+      switch (e.key) {
+        case "ArrowUp": e.preventDefault(); g.player.nextDir = "up"; break;
+        case "ArrowDown": e.preventDefault(); g.player.nextDir = "down"; break;
+        case "ArrowLeft": e.preventDefault(); g.player.nextDir = "left"; break;
+        case "ArrowRight": e.preventDefault(); g.player.nextDir = "right"; break;
       }
-
-      // Draw ghosts
-      for (const ghost of game.ghosts) {
-        drawGhost(ctx, ghost.x, ghost.y, ghost.color, ghost.frightened, ghost.eaten, game.animFrame);
-      }
-
-      // Draw player (booty)
-      drawBooty(ctx, game.player.x, game.player.y, game.player.dir, game.player.mouthOpen);
-
-      animationId = requestAnimationFrame(gameLoop);
     };
+    window.addEventListener("keydown", handleKey);
 
-    animationId = requestAnimationFrame(gameLoop);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.width = COLS * TILE;
+      canvas.height = ROWS * TILE;
+    }
+
+    // Start loops
+    requestAnimationFrame(gameLoop);
+    requestAnimationFrame(draw);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-      cancelAnimationFrame(animationId);
+      window.removeEventListener("keydown", handleKey);
     };
-  }, [gameState, getNextPos, isWalkable, updateGhosts]);
+  }, [initGame, gameLoop, draw]);
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <div className="flex items-center justify-between w-full max-w-[560px]">
-        <div className="text-sm text-muted-foreground">
-          Score: <span className="font-bold text-foreground">{score}</span>
+      {/* HUD */}
+      <div className="flex w-full max-w-[560px] items-center justify-between text-sm">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Score:</span>
+            <span className="font-mono text-lg font-bold text-purple-400">{score}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Level:</span>
+            <span className="font-mono font-bold">{level}</span>
+          </div>
         </div>
-        <div className="text-sm text-muted-foreground">
-          Lives: <span className="font-bold text-foreground">{'🍑'.repeat(lives)}</span>
-        </div>
-        <div className="text-sm text-muted-foreground">
-          Level: <span className="font-bold text-foreground">{level}</span>
+        <div className="flex gap-1">
+          {Array.from({ length: lives }).map((_, i) => (
+            <span key={i} className="text-lg">🍑</span>
+          ))}
         </div>
       </div>
 
-      <canvas
-        ref={canvasRef}
-        width={COLS * TILE}
-        height={ROWS * TILE}
-        className="rounded-lg border border-white/10"
-        style={{ imageRendering: "pixelated" }}
-      />
+      {/* Canvas */}
+      <div className="relative">
+        <canvas
+          ref={canvasRef}
+          className="rounded-lg border border-white/10"
+          style={{ imageRendering: "pixelated" }}
+        />
 
-      {gameState === "won" && (
-        <div className="flex flex-col items-center gap-4">
-          <p className="text-xl font-bold text-green-400">You won! All dots eaten! 🍑</p>
-          <ShimmerButton
-            onClick={() => {
-              setLevel((l) => l + 1);
-              initGame();
-            }}
-          >
-            Next Level
-          </ShimmerButton>
-        </div>
-      )}
-
-      {gameState === "lost" && (
-        <div className="flex flex-col items-center gap-4">
-          <p className="text-xl font-bold text-red-400">Game Over! 👻</p>
-          <ShimmerButton onClick={initGame}>Play Again</ShimmerButton>
-        </div>
-      )}
+        {/* Overlay */}
+        {gameState !== "playing" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-lg bg-black/80 backdrop-blur-sm">
+            <div className="text-5xl">{gameState === "won" ? "🎉" : "💀"}</div>
+            <h2 className="text-2xl font-bold">
+              {gameState === "won" ? "You Won!" : "Game Over"}
+            </h2>
+            <p className="text-muted-foreground">
+              {gameState === "won"
+                ? `All dots eaten! Score: ${score}`
+                : `Final score: ${score}`}
+            </p>
+            <ShimmerButton onClick={initGame}>Play Again</ShimmerButton>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
