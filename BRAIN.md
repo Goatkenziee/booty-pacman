@@ -4,15 +4,7 @@
 build me a pacman game but make the pacman a booty cheek
 
 ## Current state
-## Verification Fix Pass 2/2 — Complete
-
-**The fix** — The `_document` page not found error was caused by the `rm -rf .next &&` being inlined into the `build` script. Next.js 14.2.5 needs the `.next` directory to exist during the build for its internal page resolution. Reverting to a separate `prebuild` script (which runs before `build` in npm lifecycle) ensures the cache is cleaned before the build starts, but `.next` exists during the build itself.
-
-**Files changed:**
-- `package.json` — `build` script restored to just `next build`, with `prebuild` script `rm -rf .next` handling the cleanup separately
-- `BRAIN.md` — Updated with this documentation
-
-**Build status**: ✅ `npm run build` passes cleanly — compiled successfully, types valid, all static pages generated.
+Build verified — `npm run build` exits 0 cleanly. The `prebuild` script that ran `rm -rf .next` was removed because it caused Next.js 14.2.5 to fail with `PageNotFoundError: Cannot find module for page: /_document` during the "Collecting page data" phase. The `.next` directory needs to exist during the build for Next's internal page resolution.
 
 ## Tech stack and why
 - Next.js 14.2.5 (App Router) — modern React framework
@@ -21,27 +13,36 @@ build me a pacman game but make the pacman a booty cheek
 - Canvas API — game rendering
 
 ## What has been built
-- Full Booty Pacman game with maze, ghosts, power pellets
-- Landing page with Play Now / Sound toggle
-- Canvas-based rendering with booty-cheek player character
-- Score, lives, level display
-- Win/loss states with restart
+- .gitignore
+- PROJECT_STATE.json
+- README.md
+- app/globals.css
+- app/layout.tsx
+- app/page.tsx
+- components/booty-pacman-game.tsx
+- components/ui/bento-grid.tsx
+- components/ui/button.tsx
+- components/ui/card.tsx
+- components/ui/shimmer-button.tsx
+- lib/utils.ts
+- next-env.d.ts
+- next.config.mjs
+- package.json
+- postcss.config.mjs
+- tailwind.config.ts
+- tsconfig.json
 
 ## Latest verification
-- ✅ `npm run build` — passes cleanly (Compiled successfully, all pages generated)
-- ✅ TypeScript check — passes
-- ✅ Canvas game renders correctly
+- [✓] Build passes: `npm run build` exits 0 cleanly
+- [✓] No prebuild script deleting .next
 
 ## What's still pending
-- Vercel deploy: Reconnect Vercel integration in Settings → Integrations → Vercel → Reconnect
-- Sound effects when sound toggle is enabled
-- High score persistence with localStorage
-- Mobile touch controls
+- Deploy to Vercel (requires valid Vercel token)
 
 ## User preferences detected
 - Keep changes focused, modern, and production-ready.
 - Minimal surgical edits only — never rewrite working code.
 
 ## Run notes
-- Last updated: 2026-07-05T00:55:00.000Z
+- Last updated: 2026-07-05T01:00:00.000Z
 - Autonomous iteration: 0
